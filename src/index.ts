@@ -1,4 +1,4 @@
-import { R2Explorer, getSignedUrl } from 'r2-explorer';
+import { R2Explorer } from 'r2-explorer';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -13,8 +13,11 @@ export default {
       const object = await env.bucket.head(key);
       if (!object) return new Response("Object not found", { status: 404 });
 
-      const signedUrl = await getSignedUrl(env.bucket, key); // non-expiring
-      return new Response(JSON.stringify({ url: signedUrl }), {
+      const signedUrl = await env.bucket.createPresignedUrl(key, {
+        method: "GET"
+      });
+
+      return new Response(JSON.stringify({ url: signedUrl.toString() }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
@@ -30,9 +33,7 @@ export default {
 
     const originalHtml = await baseResponse.text();
 
-    const injectedCSS = `<style>
-      /* Placeholder for any custom styles */
-    </style>`;
+    const injectedCSS = `<style></style>`;
 
     const injectedScript = `<script>
       const injectDownloadButton = (row, key) => {
