@@ -23,8 +23,8 @@ export default {
       });
     }
 
-    // Handle base UI + upload support
-    const baseResponse = await R2Explorer.fetch(request, env, ctx, {
+    // Let r2-explorer handle main UI
+    const baseResponse = await R2Explorer(request, env, ctx, {
       readonly: false
     });
 
