@@ -1,114 +1,77 @@
-import { R2Explorer } from "r2-explorer";
+import { R2Explorer } from 'r2-explorer';
+
+const BASE_URL = "https://r2-explorer.itimsp.workers.dev"; // Update if different
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // Direct download API
-    if (pathname.startsWith("/api/direct-download")) {
-      const key = url.searchParams.get("key");
-      if (!key) return new Response("Missing key", { status: 400 });
+    // Handle /download/<filename>
+    if (pathname.startsWith("/download/")) {
+      const key = decodeURIComponent(pathname.slice("/download/".length));
+      if (!key) return new Response("Missing file name", { status: 400 });
 
-      const object = await env.bucket.head(key);
-      if (!object) return new Response("Object not found", { status: 404 });
+      const object = await env.bucket.get(key);
+      if (!object || !object.body) return new Response("File not found", { status: 404 });
 
-      const signedUrl = await env.bucket.createPresignedUrl(key, {
-        method: "GET"
-      });
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("etag", object.httpEtag);
 
-      return new Response(JSON.stringify({ url: signedUrl.toString() }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
+      return new Response(object.body, { headers });
     }
 
-    // Handle frontend config request
-    if (pathname === "/api/server/config") {
-      return new Response(
-        JSON.stringify({
-          readonly: env.READONLY === "true",
-          bucket: env.BUCKET_NAME || "bucket"
-        }),
-        {
-          headers: { "Content-Type": "application/json" }
-        }
-      );
-    }
-
-    // Force uploads enabled
+    // Let r2-explorer handle all normal routes
     env.READONLY = "false";
-
-    // Let r2-explorer handle the rest
     const baseResponse = await R2Explorer(request, env, ctx);
 
-    // Only modify HTML responses
-    if (baseResponse instanceof Response) {
-      const contentType = baseResponse.headers.get("Content-Type") || "";
-      if (contentType.includes("text/html")) {
-        const originalHtml = await baseResponse.text();
-
-        const injectedCSS = `<style></style>`;
-
-        const injectedScript = `<script>
-          const injectDownloadButton = (row, key) => {
-            const shareBtn = row.querySelector('[data-testid="share"]');
-            if (!shareBtn || row.dataset.downloadInjected) return;
-
-            const btn = shareBtn.cloneNode(true);
-            btn.title = "Get Download Link";
-            btn.querySelector("svg").outerHTML =
-              '<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="20" width="20" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>';
-
-            btn.addEventListener("click", async () => {
-              try {
-                const res = await fetch('/api/direct-download?key=' + encodeURIComponent(key));
-                const data = await res.json();
-                prompt("Direct Download Link", data.url);
-              } catch {
-                alert("Failed to fetch download link");
-              }
-            });
-
-            shareBtn.parentElement.appendChild(btn);
-            row.dataset.downloadInjected = "true";
-          };
-
-          const hideEmailSidebarButton = () => {
-            document.querySelectorAll("button.q-btn").forEach(btn => {
-              const text = btn.innerText.trim().toLowerCase();
-              if (text === "email") {
-                btn.style.display = "none";
-              }
-            });
-          };
-
-          new MutationObserver(() => {
-            document.querySelectorAll('[data-testid="file-row"]').forEach(row => {
-              const key = row.getAttribute('data-key');
-              if (key) injectDownloadButton(row, key);
-            });
-            hideEmailSidebarButton();
-          }).observe(document.body, { childList: true, subtree: true });
-        </script>`;
-
-        const modifiedHtml = originalHtml.replace(
-          "</head>",
-          `${injectedCSS}${injectedScript}</head>`
-        );
-
-        return new Response(modifiedHtml, {
-          status: baseResponse.status,
-          headers: {
-            ...Object.fromEntries(baseResponse.headers),
-            "Content-Type": "text/html; charset=UTF-8"
-          }
-        });
-      }
-
-      return baseResponse;
+    if (!(baseResponse instanceof Response)) {
+      return new Response("Unexpected output from R2Explorer", { status: 500 });
     }
 
-    return new Response("Unexpected output from R2Explorer", { status: 500 });
+    const contentType = baseResponse.headers.get("Content-Type") || "";
+    if (!contentType.includes("text/html")) return baseResponse;
+
+    const originalHtml = await baseResponse.text();
+
+    const injectedScript = `<script>
+      const BASE_URL = "${BASE_URL}";
+
+      const injectDirectLinkButton = (row, key) => {
+        const shareBtn = row.querySelector('[data-testid="share"]');
+        if (!shareBtn || row.dataset.directLinkInjected) return;
+
+        const directBtn = shareBtn.cloneNode(true);
+        directBtn.title = "Get Direct Download Link";
+        directBtn.querySelector("svg").outerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="20" width="20" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>';
+
+        directBtn.addEventListener("click", () => {
+          const link = BASE_URL + "/download/" + encodeURIComponent(key);
+          prompt("Direct Download Link", link);
+        });
+
+        shareBtn.parentElement.appendChild(directBtn);
+        row.dataset.directLinkInjected = "true";
+      };
+
+      new MutationObserver(() => {
+        document.querySelectorAll('[data-testid="file-row"]').forEach(row => {
+          const key = row.getAttribute('data-key');
+          if (key) injectDirectLinkButton(row, key);
+        });
+      }).observe(document.body, { childList: true, subtree: true });
+    </script>`;
+
+    const modifiedHtml = originalHtml.replace("</head>", `${injectedScript}</head>`);
+
+    return new Response(modifiedHtml, {
+      status: baseResponse.status,
+      headers: {
+        ...Object.fromEntries(baseResponse.headers),
+        "Content-Type": "text/html; charset=UTF-8"
+      }
+    });
   }
 };
