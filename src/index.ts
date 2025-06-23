@@ -1,4 +1,4 @@
-import { R2Explorer } from 'r2-explorer';
+import { R2Explorer } from "r2-explorer";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -23,11 +23,26 @@ export default {
       });
     }
 
-    // Set READONLY override for R2Explorer
+    // Handle frontend config request
+    if (pathname === "/api/server/config") {
+      return new Response(
+        JSON.stringify({
+          readonly: env.READONLY === "true",
+          bucket: env.BUCKET_NAME || "bucket"
+        }),
+        {
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+
+    // Force uploads enabled
     env.READONLY = "false";
 
+    // Let r2-explorer handle the rest
     const baseResponse = await R2Explorer(request, env, ctx);
 
+    // Only modify HTML responses
     if (baseResponse instanceof Response) {
       const contentType = baseResponse.headers.get("Content-Type") || "";
       if (contentType.includes("text/html")) {
@@ -39,9 +54,12 @@ export default {
           const injectDownloadButton = (row, key) => {
             const shareBtn = row.querySelector('[data-testid="share"]');
             if (!shareBtn || row.dataset.downloadInjected) return;
+
             const btn = shareBtn.cloneNode(true);
             btn.title = "Get Download Link";
-            btn.querySelector("svg").outerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="20" width="20" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>';
+            btn.querySelector("svg").outerHTML =
+              '<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="20" width="20" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>';
+
             btn.addEventListener("click", async () => {
               try {
                 const res = await fetch('/api/direct-download?key=' + encodeURIComponent(key));
@@ -51,6 +69,7 @@ export default {
                 alert("Failed to fetch download link");
               }
             });
+
             shareBtn.parentElement.appendChild(btn);
             row.dataset.downloadInjected = "true";
           };
