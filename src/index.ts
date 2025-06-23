@@ -23,12 +23,11 @@ export default {
       });
     }
 
-    // Let r2-explorer handle base UI (with upload support)
-    const baseResponse = await R2Explorer(request, env, ctx, {
-      readonly: false
-    });
+    // Set READONLY override for R2Explorer
+    env.READONLY = "false";
 
-    // SAFELY check if baseResponse is a valid Response object
+    const baseResponse = await R2Explorer(request, env, ctx);
+
     if (baseResponse instanceof Response) {
       const contentType = baseResponse.headers.get("Content-Type") || "";
       if (contentType.includes("text/html")) {
